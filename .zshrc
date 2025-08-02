@@ -9,7 +9,7 @@ HYPHEN_INSENSITIVE="true"
 
 HIST_STAMPS="dd/mm/yyyy"
 
-plugins=(git ssh-agent nvm pip starship)
+plugins=(git ssh-agent nvm pip starship zsh-autosuggestions)
 
 source $ZSH/oh-my-zsh.sh
 
@@ -23,6 +23,6 @@ else
 fi
 
 alias cfg='/usr/bin/git --git-dir=$HOME/.cfg --work-tree=$HOME'
-alias ezla='eza -la'
+alias ll='eza -la --color=always --group-directories-first'
 
 export FPATH="/home/olifog/.config/eza/completions/zsh:$FPATH"
