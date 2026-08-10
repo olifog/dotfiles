@@ -1,4 +1,37 @@
-"$schema" = 'https://starship.rs/config-schema.json'
+"$schema" = "https://starship.rs/config-schema.json"
+
+add_newline = false
+format = "$directory$git_branch$git_status$fill$cmd_duration$jobs$time$line_break$character"
+
+[directory]
+style = "bold blue"
+truncation_length = 4
+truncate_to_repo = false
+read_only = " 󰌾"
+
+[git_branch]
+symbol = " "
+style = "bold purple"
+
+[git_status]
+style = "bold yellow"
+
+[fill]
+symbol = " "
+
+[cmd_duration]
+min_time = 1_000
+format = "[$duration](yellow) "
+
+[jobs]
+symbol = "󰜎 "
+
+[time]
+disabled = false
+time_format = "%H:%M"
+format = "[$time](dimmed white)"
 
 [character]
-success_symbol = '[∅](blue)'
+success_symbol = "[❯](bold green)"
+error_symbol = "[❯](bold red)"
+vimcmd_symbol = "[❮](bold green)"
