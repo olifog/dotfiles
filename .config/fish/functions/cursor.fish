@@ -44,6 +44,6 @@ function cursor --description 'Open a local or SSH path in Cursor'
     set -l encoded_path (string escape --style=url -- $remote_path)
     set -l uri "cursor://vscode-remote/ssh-remote+$remote_host$encoded_path"
 
-    printf '\e]8;;%s\e\\Cmd-click to open %s:%s in Cursor\e]8;;\e\\\n' \
+    printf '\e]8;;%s\e\\Shift-Cmd-click to open %s:%s in Cursor\e]8;;\e\\\n' \
         "$uri" "$remote_host" "$remote_path"
 end

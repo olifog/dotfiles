@@ -11,7 +11,7 @@ command-line toolchain and links the configuration into `~/.config`.
 - Ghostty with an adaptive Catppuccin theme
 - Minimal, plugin-free Neovim configuration
 - A `cursor .` shim that opens local paths directly and emits a safe,
-  Cmd-clickable Cursor Remote SSH link when run on a cluster
+  clickable Cursor Remote SSH link when run on a cluster
 - Modern CLI tools including eza, bat, btop, fd, ripgrep, fzf, delta,
   lazygit, yazi, dust, procs, sd, tealdeer, direnv, and mise
 
@@ -48,7 +48,7 @@ Host-specific files in `~/.config/fish/conf.d` are preserved.
 For the remote Cursor link, set `DOTFILES_HOST` in a host-specific `conf.d`
 file to the matching alias from the Mac's `~/.ssh/config`. Remote terminals
 cannot launch local GUI processes directly, so the generated link requires a
-Cmd-click in Ghostty.
+Shift-Cmd-click in Ghostty while Zellij mouse mode is enabled.
 
 Reload Ghostty's config with <kbd>Cmd</kbd>+<kbd>Shift</kbd>+<kbd>,</kbd>, or
 fully quit and reopen Ghostty after changing the login shell.
