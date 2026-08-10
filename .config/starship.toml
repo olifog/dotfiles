@@ -1,12 +1,13 @@
 "$schema" = "https://starship.rs/config-schema.json"
 
 add_newline = false
-format = "$hostname$directory$git_branch$git_status$fill$cmd_duration$jobs$time$line_break$character"
+format = "${custom.cluster}$directory$git_branch$git_status$fill$cmd_duration$jobs$time$line_break$character"
 
-[hostname]
-ssh_only = true
-trim_at = "."
-format = "[$hostname](bold cyan) "
+[custom.cluster]
+when = 'test -n "$SSH_CONNECTION"'
+command = 'printf "%s" "${STARSHIP_HOST_ALIAS:-$(hostname -s)}"'
+shell = ["sh"]
+format = "[$output](bold cyan) "
 
 [directory]
 style = "bold blue"
