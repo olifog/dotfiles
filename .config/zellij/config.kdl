@@ -9,4 +9,4 @@ scroll_buffer_size 100000
 pane_frames true
 
 session_serialization true
-pane_viewport_serialization true
+serialize_pane_viewport true
