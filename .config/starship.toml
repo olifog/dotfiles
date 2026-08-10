@@ -5,7 +5,7 @@ format = "${custom.cluster}$directory$git_branch$git_status$fill$cmd_duration$jo
 
 [custom.cluster]
 when = 'test -n "$SSH_CONNECTION"'
-command = 'printf "%s" "${STARSHIP_HOST_ALIAS:-$(hostname -s)}"'
+command = 'printf "%s" "${DOTFILES_HOST:-${STARSHIP_HOST_ALIAS:-$(hostname -s)}}"'
 shell = ["sh"]
 format = "[$output](bold cyan) "
 
