@@ -10,6 +10,7 @@ backup_root="$HOME/.dotfiles-backups/$(date +%Y%m%d-%H%M%S)"
 managed_paths=(
   ".gitconfig"
   ".config/fish/config.fish"
+  ".config/fish/functions/cursor.fish"
   ".config/ghostty"
   ".config/mise"
   ".config/nvim"
