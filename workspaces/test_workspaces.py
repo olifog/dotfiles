@@ -79,6 +79,23 @@ class WorkspaceTests(unittest.TestCase):
   wt=self.root/'app';self.git(self.repo,'worktree','add','--detach',str(wt),'HEAD')
   self.assertNotEqual(self.aw('guard',wt,'pre-commit',ok=False).returncode,0)
   self.git(wt,'switch','-c','olifog/app');self.aw('guard',wt,'pre-commit')
+ def test_task_filename_uses_session_identity_and_reuses_worktree(self):
+  first=Path(self.aw('task','core','tasks/do-the-work.md','--session','chat-A').stdout.strip())
+  same=Path(self.aw('task','core','do-the-work.md','--session','chat-A').stdout.strip())
+  other=Path(self.aw('task','core','tasks/do-the-work.md','--session','chat-B').stdout.strip())
+  self.assertEqual(first,same);self.assertNotEqual(first,other)
+  self.assertTrue(first.name.startswith('do-the-work-'))
+  env=dict(self.env,CODEX_THREAD_ID='chat-A')
+  self.assertEqual(Path(self.aw('task','core','tasks/do-the-work.md',env=env).stdout.strip()),first)
+  env.pop('CODEX_THREAD_ID')
+  self.assertNotEqual(self.aw('task','core','task.md',env=env,ok=False).returncode,0)
+ def test_prompt_hook_explains_agent_owned_setup(self):
+  payload={'cwd':str(self.repo),'hook_event_name':'UserPromptSubmit','session_id':'chat-A','prompt':'/goal tasks/do-the-work.md'}
+  message=json.loads(self.aw('hook',data=json.dumps(payload)).stdout)['hookSpecificOutput']['additionalContext']
+  self.assertIn('task core TASK_FILE --session chat-A',message)
+  self.assertIn('never ask Oliver',message)
+  settings=json.loads((self.home/'.codex/hooks.json').read_text())
+  self.assertIn('UserPromptSubmit',settings['hooks'])
  def test_legacy_app_worktree_checks_its_own_refs(self):
   legacy=self.root/'legacy';self.cmd('git','clone',str(self.remote),str(legacy))
   app=self.root/'legacy-app';self.git(legacy,'worktree','add','-b','olifog/old',str(app),'HEAD')

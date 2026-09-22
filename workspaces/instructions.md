@@ -1,9 +1,22 @@
 ## shared Git workspaces
 
-- before reading task context or editing a registered repo, use
-  `~/.local/bin/agent-workspace start REPO TASK` for a new task. it fetches the
-  remote default branch and creates `olifog/TASK` in a separate worktree. use
-  that returned path for every read, edit, test, and Git command.
+- Oliver normally starts a task by pasting its filename in a new Codex chat
+  with `/goal`. that is sufficient. YOU handle workspace setup automatically;
+  never ask Oliver to run a command, name a branch, or choose a worktree.
+- for a new task-file request, before reading the task context, run
+  `~/.local/bin/agent-workspace task core TASK_FILE` yourself. it fetches upstream
+  and derives a task branch from the filename and `CODEX_THREAD_ID`, which Codex
+  supplies. another chat for the same task gets its own branch. if that variable
+  is absent (e.g. Claude), pass `--session` with your current session/chat ID
+  from hook context. do not invent a different ID on resume.
+- use the returned path for every read, edit, test, and Git command. shell cd
+  does not change the app's registered cwd: set workdir or absolute paths on
+  subsequent tools. read the current task file there, even if the attachment
+  or saved project points at an older checkout. follow its approved scope.
+- if this task already has a worktree, retain it and check freshness there;
+  do not migrate ongoing work or create another branch on every prompt.
+- for work without a task filename, choose a descriptive task slug yourself
+  and use `~/.local/bin/agent-workspace start REPO TASK`.
 - resume the same task in its existing worktree. run
   `~/.local/bin/agent-workspace check /absolute/worktree` to fetch and compare.
   never interpret a failed fetch as proof that a checkout is current.

@@ -126,6 +126,13 @@ def sync(entry):
     save_state(entry,s)
     return s
 
+def task_name(filename, session):
+    if not session:
+        raise Failure('Session identity is missing. The agent must pass --session with its current chat ID; Oliver does not need to name a branch.')
+    stem = re.sub(r'[^a-z0-9._-]+', '-', Path(filename).stem.lower()).strip('.-_')
+    stem = re.sub(r'\.{2,}', '-', stem)[:48].rstrip('.-_') or 'task'
+    return stem+'-'+hashlib.sha256(session.encode()).hexdigest()[:12]
+
 def start(entry, task):
     if not re.fullmatch(r'[a-z0-9][a-z0-9._-]{0,79}',task) or '..' in task:
         raise Failure('Task name must use lowercase letters, digits, dots, underscores or hyphens, without ..')
@@ -172,6 +179,8 @@ def hook():
         try: entry=resolve(cwd)
         except (Failure,subprocess.TimeoutExpired): return
         message=('Git workflow: shared checkout '+entry['path']+' is a reference. Before reading task context or writing, run ~/.local/bin/agent-workspace start '+entry['name']+' TASK, then use the returned directory for every tool call. Resume an existing task in its existing worktree with agent-workspace check PATH. Fetch failure means freshness is unknown. Never silently start from stale HEAD. Read AGENTS.md and current task notes there. Commit deliberately; agent-workspace update fetches and rebases only a clean task worktree. Rebase at phase boundaries/before publish, never on a timer. Existing dirty reference edits belong to recovery; do not stash, reset, or copy stale status over upstream. Obsidian human edits are exempt from agent isolation but require reviewed publishing.')
+        session_arg=' --session '+shlex.quote(str(payload['session_id'])) if payload.get('session_id') else ''
+        message += (' Oliver normally starts a new chat with /goal and a task filename. For that workflow, YOU run ~/.local/bin/agent-workspace task core TASK_FILE'+session_arg+' before reading the task notes. The helper derives an isolated branch from the filename and this session identity; never ask Oliver to run shell commands, choose a branch, or set up the worktree. Use the returned path for every tool call. Keep any worktree already selected for this ongoing task; do not relocate existing work or rebase on every prompt. A hook cannot change the app cwd: you must set workdir or absolute paths explicitly.')
         print(json.dumps({'hookSpecificOutput':{'hookEventName':event,'additionalContext':message}}))
     elif event=='PreToolUse':
         name=payload.get('tool_name',''); data=payload.get('tool_input',{})
@@ -194,6 +203,7 @@ def main():
     for command in ['start','run']:
         q=sub.add_parser(command);q.add_argument('repo');q.add_argument('task')
         if command=='run':q.add_argument('program',nargs=argparse.REMAINDER)
+    q=sub.add_parser('task');q.add_argument('repo');q.add_argument('filename');q.add_argument('--session',default=os.environ.get('CODEX_THREAD_ID'))
     q=sub.add_parser('check');q.add_argument('repo',nargs='?',default='.')
     q=sub.add_parser('update');q.add_argument('repo',nargs='?',default='.')
     q=sub.add_parser('sync');q.add_argument('repo',nargs='?',default='all')
@@ -231,10 +241,11 @@ def main():
         if any(s['sync']=='error' for s in results):raise Failure('One or more syncs failed; see status above.')
         return
     entry=resolve(a.repo)
-    if a.command in ('start','run'):
+    if a.command in ('start','run','task'):
+        if a.command=='task':a.task=task_name(a.filename,a.session)
         entry=dict(config()['repos'][entry['name']],name=entry['name'])
         dest=start(entry,a.task)
-        if a.command=='start':print(dest);return
+        if a.command in ('start','task'):print(dest);return
         program=a.program[1:] if a.program[:1]==['--'] else a.program
         if not program:raise Failure('Supply a program after --, e.g. claude-account or codex.')
         os.chdir(dest);os.execvp(program[0],program)

@@ -21,6 +21,18 @@ new worktrees are created from the registered reference, never from legacy HEAD.
 
 ## task lifecycle
 
+Oliver starts a new Codex chat with `/goal tasks/TASK.md` (or the task filename).
+the agent runs setup itself before reading task context. no terminal preparation
+or user-chosen branch is required. global instructions carry this requirement;
+SessionStart/UserPromptSubmit hooks reinforce it when trusted.
+
+`agent-workspace task core TASK_FILE` derives a stable branch from the filename
+and `CODEX_THREAD_ID`. separate chats get separate worktrees; a resumed chat
+reuses its own. Claude can supply `--session` from hook context. agents explicitly
+use the returned tool workdir; the app's registered cwd is not silently changed.
+existing task worktrees are retained. the following commands are agent internals
+or optional terminal conveniences, not steps Oliver must perform.
+
 ```sh
 # prints one path, suitable for cd; works even if the old root is dirty or stale
 cd "$(~/.local/bin/agent-workspace start core describe-the-task)"

@@ -115,7 +115,7 @@ block(HOME/'.codex/AGENTS.md',policy)
 block(HOME/'.claude/CLAUDE.md',policy)
 for path in [HOME/'.codex/hooks.json',HOME/'.claude/settings.json']:
  settings=json.loads(path.read_text()) if path.exists() else {}
- for event in ['SessionStart','PreToolUse']:
+ for event in ['SessionStart','UserPromptSubmit','PreToolUse']:
   groups=settings.setdefault('hooks',{}).setdefault(event,[])
   hook={'hooks':[{'type':'command','command':shlex.quote(str(HOME/'.local/bin/agent-workspace'))+' hook','timeout':15}]}
   if event=='PreToolUse':hook['matcher']='Edit|Write|MultiEdit|NotebookEdit|apply_patch'
