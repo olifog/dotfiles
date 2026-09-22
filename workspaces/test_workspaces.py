@@ -87,7 +87,7 @@ class WorkspaceTests(unittest.TestCase):
   result=json.loads(self.aw('check',app).stdout);self.assertEqual(result['behind'],1)
   self.assertFalse((legacy/'.git/hooks/pre-commit').exists())
   new=Path(self.aw('start',legacy,'new-task').stdout.strip())
-  self.assertEqual(self.git(new,'rev-parse','--path-format=absolute','--git-common-dir').stdout.strip(),str(self.repo/'.git'))
+  self.assertEqual(self.git(new,'rev-parse','--path-format=absolute','--git-common-dir').stdout.strip(),str((self.repo/'.git').resolve()))
  def test_other_handler_in_managed_group_is_preserved(self):
   path=self.home/'.claude/settings.json';settings=json.loads(path.read_text())
   settings['hooks']['SessionStart'][0]['hooks'].append({'type':'command','command':'echo user-hook'})
