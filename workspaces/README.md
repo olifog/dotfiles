@@ -10,7 +10,7 @@ of context. each task writes in its own worktree, starting from fetched upstream
 ```
 
 use actual paths from core's `system/hosts.yaml`. registration records the remote
-default branch via `origin/HEAD`; set that ref first if the clone lacks it.
+default branch via `origin/HEAD`, discovering it from the remote if absent.
 the installer preserves settings, personal instructions, and pre-existing Git
 hooks. backups live under `~/.local/state/agent-workspace/install-backups/`.
 installation does not change authentication, providers, models, or permissions.

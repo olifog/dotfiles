@@ -19,7 +19,7 @@ def write(path,text,mode=None):
  tmp.chmod(mode if mode is not None else (path.stat().st_mode & 0o777 if path.exists() else 0o600))
  os.replace(tmp,path)
 
-def command(*args):return subprocess.check_output(args,text=True).strip()
+def command(*args):return subprocess.check_output(args,text=True,timeout=45,env=dict(os.environ,GIT_TERMINAL_PROMPT='0',GIT_SSH_COMMAND='ssh -o BatchMode=yes -o ConnectTimeout=10')).strip()
 def block(path,text):
  start='<!-- agent-workspace:start -->';end='<!-- agent-workspace:end -->'
  old=path.read_text() if path.exists() else ''
@@ -93,7 +93,15 @@ for spec in a.repo:
  name,path=spec.split('=',1)
  if not re.fullmatch('[a-z0-9][a-z0-9_-]*',name):raise RuntimeError('Invalid repo name')
  path=P(command('git','-C',str(P(path).expanduser()),'rev-parse','--show-toplevel')).resolve()
- branch=command('git','-C',str(path),'symbolic-ref','--short','refs/remotes/origin/HEAD').removeprefix('origin/')
+ result=subprocess.run(['git','-C',str(path),'symbolic-ref','--short','refs/remotes/origin/HEAD'],text=True,capture_output=True,timeout=15)
+ if result.returncode==0:branch=result.stdout.strip().removeprefix('origin/')
+ else:
+  refs=command('git','-C',str(path),'ls-remote','--symref','origin','HEAD')
+  match=re.search(r'^ref: refs/heads/(.+)\s+HEAD$',refs,re.M)
+  if not match:raise RuntimeError('Cannot determine the remote default branch for '+str(path))
+  branch=match.group(1).strip()
+  command('git','-C',str(path),'fetch','--quiet','origin','+refs/heads/'+branch+':refs/remotes/origin/'+branch)
+  command('git','-C',str(path),'symbolic-ref','refs/remotes/origin/HEAD','refs/remotes/origin/'+branch)
  data['repos'][name]=dict(data['repos'].get(name,{}),path=str(path),branch=branch,autosync=name=='core')
 for spec in a.legacy_root:
  name,path=spec.split('=',1)

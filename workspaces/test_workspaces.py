@@ -79,6 +79,10 @@ class WorkspaceTests(unittest.TestCase):
   wt=self.root/'app';self.git(self.repo,'worktree','add','--detach',str(wt),'HEAD')
   self.assertNotEqual(self.aw('guard',wt,'pre-commit',ok=False).returncode,0)
   self.git(wt,'switch','-c','olifog/app');self.aw('guard',wt,'pre-commit')
+ def test_missing_origin_head_is_discovered(self):
+  self.git(self.repo,'symbolic-ref','--delete','refs/remotes/origin/HEAD')
+  self.install()
+  self.assertEqual(self.git(self.repo,'symbolic-ref','--short','refs/remotes/origin/HEAD').stdout.strip(),'origin/main')
  def test_custom_hooks_path_is_preserved(self):
   path=self.repo/'.hooks';path.mkdir();hook=path/'pre-commit';hook.write_text('#!/bin/sh\necho custom >&2\n');hook.chmod(0o755)
   self.git(self.repo,'config','core.hooksPath',str(path));self.install()
