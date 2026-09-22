@@ -22,14 +22,18 @@ new worktrees are created from the registered reference, never from legacy HEAD.
 ## task lifecycle
 
 Oliver starts a new Codex chat with `/goal tasks/TASK.md` (or the task filename).
+a Claude worker can start from just a core task-note link in Claude Code or the
+Claude Desktop Code SSH workspace; no `/goal` is required there.
 the agent runs setup itself before reading task context. no terminal preparation
 or user-chosen branch is required. global instructions carry this requirement;
 SessionStart/UserPromptSubmit hooks reinforce it when trusted.
 
 `agent-workspace task core TASK_FILE` derives a stable branch from the filename
 and `CODEX_THREAD_ID`. separate chats get separate worktrees; a resumed chat
-reuses its own. Claude can supply `--session` from hook context. agents explicitly
+reuses its own. Claude always supplies its own `--session` from hook context, including when
+started by a process with CODEX_THREAD_ID set. agents explicitly
 use the returned tool workdir; the app's registered cwd is not silently changed.
+the steward and paladins remain on Codex; workers publish to the same core notes.
 existing task worktrees are retained. the following commands are agent internals
 or optional terminal conveniences, not steps Oliver must perform.
 

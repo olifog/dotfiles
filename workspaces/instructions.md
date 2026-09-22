@@ -1,14 +1,24 @@
 ## shared Git workspaces
 
 - Oliver normally starts a task by pasting its filename in a new Codex chat
-  with `/goal`. that is sufficient. YOU handle workspace setup automatically;
+  with `/goal`, or by pasting a core task-note link into a new Claude Code /
+  Claude Desktop Code SSH session. both are sufficient; Claude does not need
+  `/goal`. handle workspace setup automatically;
   never ask Oliver to run a command, name a branch, or choose a worktree.
+- resolve pasted task-note links (Markdown, Obsidian or GitHub) to the core note
+  path. use the current repository note as the source of scope and status.
+  a conversation link alone is not a task note; locate its linked approved note
+  before proceeding, and clarify only if that mapping remains ambiguous.
+- Oliver's steward and paladins remain on Codex. Claude workers publish results
+  to the same core task/project notes and link their code commits or PRs. do not
+  migrate the steward/paladins or message them unless Oliver asks.
 - for a new task-file request, before reading the task context, run
   `~/.local/bin/agent-workspace task core TASK_FILE` yourself. it fetches upstream
   and derives a task branch from the filename and `CODEX_THREAD_ID`, which Codex
   supplies. another chat for the same task gets its own branch. if that variable
-  is absent (e.g. Claude), pass `--session` with your current session/chat ID
-  from hook context. do not invent a different ID on resume.
+  is absent, pass `--session` with your current session/chat ID from hook context.
+  Claude always passes its own hook-provided session ID explicitly, even if a
+  parent process exported CODEX_THREAD_ID. do not invent a different ID on resume.
 - use the returned path for every read, edit, test, and Git command. shell cd
   does not change the app's registered cwd: set workdir or absolute paths on
   subsequent tools. read the current task file there, even if the attachment

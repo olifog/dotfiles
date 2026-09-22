@@ -96,6 +96,17 @@ class WorkspaceTests(unittest.TestCase):
   self.assertIn('never ask Oliver',message)
   settings=json.loads((self.home/'.codex/hooks.json').read_text())
   self.assertIn('UserPromptSubmit',settings['hooks'])
+ def test_claude_plain_link_uses_its_own_session(self):
+  payload={'cwd':str(self.repo),'hook_event_name':'UserPromptSubmit','session_id':'claude-chat','prompt':'[[tasks/do-the-work]]'}
+  message=json.loads(self.aw('hook',data=json.dumps(payload)).stdout)['hookSpecificOutput']['additionalContext']
+  self.assertIn('task core TASK_FILE --session claude-chat',message)
+  self.assertIn('without requiring /goal',message)
+  env=dict(self.env,CODEX_THREAD_ID='parent-codex-chat')
+  claude=self.aw('task','core','tasks/do-the-work.md','--session','claude-chat',env=env).stdout.strip()
+  codex=self.aw('task','core','tasks/do-the-work.md',env=env).stdout.strip()
+  self.assertNotEqual(claude,codex)
+  settings=json.loads((self.home/'.claude/settings.json').read_text())
+  self.assertIn('SessionStart',settings['hooks']);self.assertIn('UserPromptSubmit',settings['hooks'])
  def test_legacy_app_worktree_checks_its_own_refs(self):
   legacy=self.root/'legacy';self.cmd('git','clone',str(self.remote),str(legacy))
   app=self.root/'legacy-app';self.git(legacy,'worktree','add','-b','olifog/old',str(app),'HEAD')
