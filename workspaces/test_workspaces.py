@@ -79,6 +79,15 @@ class WorkspaceTests(unittest.TestCase):
   wt=self.root/'app';self.git(self.repo,'worktree','add','--detach',str(wt),'HEAD')
   self.assertNotEqual(self.aw('guard',wt,'pre-commit',ok=False).returncode,0)
   self.git(wt,'switch','-c','olifog/app');self.aw('guard',wt,'pre-commit')
+ def test_legacy_app_worktree_checks_its_own_refs(self):
+  legacy=self.root/'legacy';self.cmd('git','clone',str(self.remote),str(legacy))
+  app=self.root/'legacy-app';self.git(legacy,'worktree','add','-b','olifog/old',str(app),'HEAD')
+  self.cmd('python3',str(SOURCE/'install.py'),'--legacy-root','core='+str(legacy))
+  self.upstream_commit()
+  result=json.loads(self.aw('check',app).stdout);self.assertEqual(result['behind'],1)
+  self.assertFalse((legacy/'.git/hooks/pre-commit').exists())
+  new=Path(self.aw('start',legacy,'new-task').stdout.strip())
+  self.assertEqual(self.git(new,'rev-parse','--path-format=absolute','--git-common-dir').stdout.strip(),str(self.repo/'.git'))
  def test_other_handler_in_managed_group_is_preserved(self):
   path=self.home/'.claude/settings.json';settings=json.loads(path.read_text())
   settings['hooks']['SessionStart'][0]['hooks'].append({'type':'command','command':'echo user-hook'})

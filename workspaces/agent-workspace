@@ -46,8 +46,13 @@ def resolve(name):
     p = Path(out(Path(name).expanduser(), 'rev-parse', '--show-toplevel')).resolve()
     common = Path(out(p, 'rev-parse', '--path-format=absolute', '--git-common-dir')).resolve()
     for key, entry in c.items():
-        if common == Path(out(entry['path'], 'rev-parse', '--path-format=absolute', '--git-common-dir')).resolve() or str(p) in entry.get('legacy_roots',[]):
-            return dict(entry, name=key)
+        for reference in [entry['path']]+entry.get('legacy_roots',[]):
+            if not Path(reference).exists(): continue
+            if common == Path(out(reference, 'rev-parse', '--path-format=absolute', '--git-common-dir')).resolve():
+                # Legacy app worktrees have their own object store and remote refs.
+                # Check/update that store; never report freshness from another clone.
+                return dict(entry, name=key, path=reference,
+                            autosync=entry.get('autosync',False) and reference==entry['path'])
     raise Failure('Repository is not registered. Run install-workspaces.sh --repo NAME=PATH first.')
 
 def common(entry):
@@ -227,6 +232,7 @@ def main():
         return
     entry=resolve(a.repo)
     if a.command in ('start','run'):
+        entry=dict(config()['repos'][entry['name']],name=entry['name'])
         dest=start(entry,a.task)
         if a.command=='start':print(dest);return
         program=a.program[1:] if a.program[:1]==['--'] else a.program
