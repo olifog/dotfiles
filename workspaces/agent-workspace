@@ -1,0 +1,247 @@
+#!/usr/bin/env python3
+"""Safe task worktrees and observable, fast-forward-only reference synchronization."""
+import argparse
+import contextlib
+import datetime
+import fcntl
+import hashlib
+import json
+import os
+from pathlib import Path
+import re
+import shlex
+import subprocess
+import sys
+import tempfile
+import socket
+import time
+
+CONFIG = Path(os.environ.get('AGENT_WORKSPACE_CONFIG', str(Path.home()/'.config/agent-workspace/repos.json')))
+STATE = Path(os.environ.get('AGENT_WORKSPACE_STATE', str(Path.home()/'.local/state/agent-workspace')))
+
+class Failure(Exception):
+    pass
+
+def run(args, cwd=None, check=True, timeout=45, data=None):
+    env = dict(os.environ, GIT_TERMINAL_PROMPT='0', GIT_EDITOR='true')
+    env.setdefault('GIT_SSH_COMMAND', 'ssh -o BatchMode=yes -o ConnectTimeout=10')
+    p = subprocess.run(args, cwd=cwd, input=data, text=True, capture_output=True, env=env, timeout=timeout)
+    if check and p.returncode:
+        raise Failure((p.stderr or p.stdout).strip() or 'command failed: '+shlex.join(args))
+    return p
+
+def git(repo, *args, **kw):
+    return run(['git', '-C', str(repo), *args], **kw)
+
+def out(repo, *args):
+    return git(repo, *args).stdout.strip()
+
+def config():
+    return json.loads(CONFIG.read_text()) if CONFIG.exists() else {'repos': {}}
+
+def resolve(name):
+    c = config()['repos']
+    if name in c:
+        return dict(c[name], name=name)
+    p = Path(out(Path(name).expanduser(), 'rev-parse', '--show-toplevel')).resolve()
+    common = Path(out(p, 'rev-parse', '--path-format=absolute', '--git-common-dir')).resolve()
+    for key, entry in c.items():
+        if common == Path(out(entry['path'], 'rev-parse', '--path-format=absolute', '--git-common-dir')).resolve() or str(p) in entry.get('legacy_roots',[]):
+            return dict(entry, name=key)
+    raise Failure('Repository is not registered. Run install-workspaces.sh --repo NAME=PATH first.')
+
+def common(entry):
+    return Path(out(entry['path'], 'rev-parse', '--path-format=absolute', '--git-common-dir')).resolve()
+
+@contextlib.contextmanager
+def lock(entry):
+    # flock releases on process death. The file is shared by every worktree.
+    with (common(entry)/'agent-workspace.lock').open('a+') as f:
+        try:
+            fcntl.flock(f, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError:
+            raise Failure('Another workspace operation is running; retry shortly.')
+        yield
+
+def fetch(entry):
+    branch = entry.get('branch', 'main')
+    # Explicit destination is necessary when a clone has a narrow fetch refspec.
+    git(entry['path'], 'fetch', '--quiet', 'origin', '+refs/heads/'+branch+':refs/remotes/origin/'+branch)
+
+def upstream(entry):
+    return 'refs/remotes/origin/'+entry.get('branch', 'main')
+
+def operation(repo):
+    for marker in ['rebase-merge', 'rebase-apply', 'MERGE_HEAD', 'CHERRY_PICK_HEAD', 'REVERT_HEAD', 'BISECT_LOG']:
+        if Path(out(repo, 'rev-parse', '--path-format=absolute', '--git-path', marker)).exists():
+            return marker
+    return None
+
+def clean(repo):
+    return not out(repo, 'status', '--porcelain', '--untracked-files=all')
+
+def require_task(entry, repo):
+    root = Path(out(repo, 'rev-parse', '--show-toplevel')).resolve()
+    if root == Path(entry['path']).resolve():
+        raise Failure('Shared reference checkout: create/resume a task with agent-workspace start '+entry['name']+' TASK. Do not edit or commit here.')
+    branch = out(repo, 'branch', '--show-current')
+    if not branch or branch == entry.get('branch', 'main'):
+        raise Failure('Use a named task branch, not detached HEAD or the default branch.')
+    return root
+
+def status(entry, repo):
+    ahead, behind = out(repo, 'rev-list', '--left-right', '--count', 'HEAD...'+upstream(entry)).split()
+    return dict(repo=entry['name'], path=str(Path(repo).resolve()), branch=out(repo, 'branch', '--show-current'),
+                head=out(repo, 'rev-parse', '--short', 'HEAD'), upstream=out(repo, 'rev-parse', '--short', upstream(entry)),
+                ahead=int(ahead), behind=int(behind), dirty=not clean(repo), operation=operation(repo))
+
+def save_state(entry, result):
+    STATE.mkdir(parents=True, exist_ok=True)
+    result['checked_at'] = datetime.datetime.now(datetime.timezone.utc).isoformat()
+    target=STATE/(entry['name']+'.json')
+    fd,tmp=tempfile.mkstemp(dir=STATE)
+    with os.fdopen(fd,'w') as f: json.dump(result,f,indent=2)
+    os.replace(tmp,target)
+
+def sync(entry):
+    try:
+        with lock(entry):
+            fetch(entry)
+            p=entry['path']; s=status(entry,p)
+            if not entry.get('autosync',False): s['sync']='fetch-only'
+            elif s['operation']: s['sync']='blocked-operation'
+            elif s['branch'] != entry.get('branch','main'): s['sync']='blocked-branch'
+            elif s['dirty']: s['sync']='blocked-dirty'
+            elif s['ahead']: s['sync']='blocked-diverged' if s['behind'] else 'blocked-local-commits'
+            else:
+                if s['behind']: git(p,'merge','--ff-only',upstream(entry))
+                s=status(entry,p);s['sync']='current'
+    except (Failure, subprocess.TimeoutExpired) as e:
+        s=dict(repo=entry['name'],path=entry['path'],sync='error',error=str(e))
+    save_state(entry,s)
+    return s
+
+def start(entry, task):
+    if not re.fullmatch(r'[a-z0-9][a-z0-9._-]{0,79}',task) or '..' in task:
+        raise Failure('Task name must use lowercase letters, digits, dots, underscores or hyphens, without ..')
+    with lock(entry):
+        fetch(entry)
+        p=entry['path'];branch='olifog/'+task
+        trees=git(p,'worktree','list','--porcelain').stdout.split('\n\n')
+        for tree in trees:
+            lines=tree.splitlines()
+            if 'branch refs/heads/'+branch in lines:
+                dest=Path(lines[0].removeprefix('worktree '))
+                require_task(entry,dest)
+                if operation(dest): raise Failure('Finish the existing Git operation in '+str(dest))
+                print('Resuming existing worktree; upstream fetched, files and commits unchanged.',file=sys.stderr)
+                return dest
+        if git(p,'show-ref','--verify','--quiet','refs/heads/'+branch,check=False).returncode==0:
+            raise Failure('Branch already exists without a worktree; attach it deliberately with git worktree add.')
+        root=Path(entry.get('worktrees',str(Path(p).parent/'.agent-worktrees'/entry['name'])))
+        dest=root/task
+        if dest.exists(): raise Failure('Destination already exists: '+str(dest))
+        root.mkdir(parents=True,exist_ok=True)
+        git(p,'worktree','add','--no-track','-b',branch,str(dest),upstream(entry))
+        git(dest,'config','branch.'+branch+'.agentWorkspaceBase',out(dest,'rev-parse','HEAD'))
+        return dest
+
+def guard(repo, event):
+    entry=resolve(repo)
+    # Explicit human exception for reviewed Obsidian commits, never set in agent launchers.
+    if os.environ.get('AGENT_WORKSPACE_HUMAN')=='1': return
+    require_task(entry,repo)
+    if event=='pre-push':
+        with lock(entry):
+            fetch(entry)
+            updates=[line.split() for line in sys.stdin if line.strip()]
+            for local_ref,sha,remote_ref,remote_sha in updates:
+                if set(sha)=={'0'} or not remote_ref.startswith('refs/heads/'): continue
+                if git(repo,'merge-base','--is-ancestor',upstream(entry),sha,check=False).returncode:
+                    raise Failure('Push refused: branch does not contain current origin/'+entry.get('branch','main')+'. Commit your edits, run agent-workspace update in this worktree, review and test, then retry. Never force-push shared main.')
+
+def hook():
+    payload=json.load(sys.stdin); event=payload.get('hook_event_name','SessionStart')
+    cwd=payload.get('cwd',os.getcwd())
+    if event in ('SessionStart','UserPromptSubmit'):
+        try: entry=resolve(cwd)
+        except (Failure,subprocess.TimeoutExpired): return
+        message=('Git workflow: shared checkout '+entry['path']+' is a reference. Before reading task context or writing, run ~/.local/bin/agent-workspace start '+entry['name']+' TASK, then use the returned directory for every tool call. Resume an existing task in its existing worktree with agent-workspace check PATH. Fetch failure means freshness is unknown. Never silently start from stale HEAD. Read AGENTS.md and current task notes there. Commit deliberately; agent-workspace update fetches and rebases only a clean task worktree. Rebase at phase boundaries/before publish, never on a timer. Existing dirty reference edits belong to recovery; do not stash, reset, or copy stale status over upstream. Obsidian human edits are exempt from agent isolation but require reviewed publishing.')
+        print(json.dumps({'hookSpecificOutput':{'hookEventName':event,'additionalContext':message}}))
+    elif event=='PreToolUse':
+        name=payload.get('tool_name',''); data=payload.get('tool_input',{})
+        paths=[]
+        if isinstance(data,dict):
+            paths=[data[k] for k in ('file_path','path','notebook_path') if isinstance(data.get(k),str)] if re.search(r'(?i)(edit|write|patch)',name) else []
+        patch=data if isinstance(data,str) else data.get('patch',data.get('input',data.get('command','')))
+        if 'apply_patch' in name and isinstance(patch,str):
+            paths += re.findall(r'^\*\*\* (?:Add File|Update File|Delete File|Move to): (.+)$',patch,re.M)
+        for path in paths:
+            target=(Path(cwd)/path).resolve()
+            for e in config()['repos'].values():
+                reference=Path(e['path']).resolve()
+                if target==reference or reference in target.parents:
+                    print(json.dumps({'hookSpecificOutput':{'hookEventName':event,'permissionDecision':'deny','permissionDecisionReason':'Agent edits in the shared reference checkout are disabled. Create/resume a task worktree using agent-workspace start and edit there.'}}))
+                    return
+
+def main():
+    p=argparse.ArgumentParser(description=__doc__);sub=p.add_subparsers(dest='command',required=True)
+    for command in ['start','run']:
+        q=sub.add_parser(command);q.add_argument('repo');q.add_argument('task')
+        if command=='run':q.add_argument('program',nargs=argparse.REMAINDER)
+    q=sub.add_parser('check');q.add_argument('repo',nargs='?',default='.')
+    q=sub.add_parser('update');q.add_argument('repo',nargs='?',default='.')
+    q=sub.add_parser('sync');q.add_argument('repo',nargs='?',default='all')
+    q=sub.add_parser('guard');q.add_argument('repo');q.add_argument('event')
+    sub.add_parser('hook')
+    sub.add_parser('status')
+    sub.add_parser('daemon')
+    sub.add_parser('ensure-daemon')
+    a=p.parse_args()
+    if a.command in ('daemon','ensure-daemon'):
+        STATE.mkdir(parents=True,exist_ok=True)
+        daemon_lock=STATE/('daemon-'+socket.gethostname()+'.lock')
+        with daemon_lock.open('a+') as f:
+            try:fcntl.flock(f,fcntl.LOCK_EX|fcntl.LOCK_NB)
+            except BlockingIOError:return
+            if a.command=='ensure-daemon':
+                fcntl.flock(f,fcntl.LOCK_UN)
+                subprocess.Popen([sys.executable,str(Path(__file__).resolve()),'daemon'],start_new_session=True,stdin=subprocess.DEVNULL,stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL)
+                return
+            f.seek(0);f.truncate();f.write(str(os.getpid()));f.flush()
+            while True:
+                try:sync(resolve('core'))
+                except Exception as e:save_state({'name':'daemon'}, {'error':str(e)})
+                time.sleep(300)
+    if a.command=='hook':hook();return
+    if a.command=='guard':guard(a.repo,a.event);return
+    if a.command=='status':
+        for n in config()['repos']:
+            f=STATE/(n+'.json');print(f.read_text() if f.exists() else json.dumps({'repo':n,'sync':'not-yet-checked'}))
+        return
+    if a.command=='sync':
+        entries=[dict(v,name=k) for k,v in config()['repos'].items()] if a.repo=='all' else [resolve(a.repo)]
+        results=[sync(e) for e in entries]
+        for s in results:print(json.dumps(s))
+        if any(s['sync']=='error' for s in results):raise Failure('One or more syncs failed; see status above.')
+        return
+    entry=resolve(a.repo)
+    if a.command in ('start','run'):
+        dest=start(entry,a.task)
+        if a.command=='start':print(dest);return
+        program=a.program[1:] if a.program[:1]==['--'] else a.program
+        if not program:raise Failure('Supply a program after --, e.g. claude-account or codex.')
+        os.chdir(dest);os.execvp(program[0],program)
+    repo=entry['path'] if a.repo in config()['repos'] else str(Path(a.repo).resolve())
+    with lock(entry):
+        fetch(entry)
+        if a.command=='update':
+            require_task(entry,repo)
+            if not clean(repo) or operation(repo):raise Failure('Commit/review your changes and finish any Git operation first. No automatic stashing.')
+            git(repo,'-c','rebase.autoStash=false','-c','rerere.enabled=false','rebase',upstream(entry))
+        print(json.dumps(status(entry,repo)))
+
+if __name__=='__main__':
+    try:main()
+    except (Failure,subprocess.TimeoutExpired,OSError,ValueError) as e:
+        print('agent-workspace: '+str(e),file=sys.stderr);sys.exit(1)

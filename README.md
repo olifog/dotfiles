@@ -52,3 +52,9 @@ Shift-Cmd-click in Ghostty while Zellij mouse mode is enabled.
 
 Reload Ghostty's config with <kbd>Cmd</kbd>+<kbd>Shift</kbd>+<kbd>,</kbd>, or
 fully quit and reopen Ghostty after changing the login shell.
+
+## Claude and Codex workspaces
+
+Use [the shared workspace workflow](workspaces/README.md) for fresh task worktrees,
+safe reference updates and Git guards. Install with `./install-workspaces.sh`
+and register the host-specific core, Hangar and dotfiles paths.
