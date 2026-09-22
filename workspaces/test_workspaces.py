@@ -79,6 +79,12 @@ class WorkspaceTests(unittest.TestCase):
   wt=self.root/'app';self.git(self.repo,'worktree','add','--detach',str(wt),'HEAD')
   self.assertNotEqual(self.aw('guard',wt,'pre-commit',ok=False).returncode,0)
   self.git(wt,'switch','-c','olifog/app');self.aw('guard',wt,'pre-commit')
+ def test_other_handler_in_managed_group_is_preserved(self):
+  path=self.home/'.claude/settings.json';settings=json.loads(path.read_text())
+  settings['hooks']['SessionStart'][0]['hooks'].append({'type':'command','command':'echo user-hook'})
+  path.write_text(json.dumps(settings));self.install()
+  groups=json.loads(path.read_text())['hooks']['SessionStart']
+  self.assertEqual(sum(h['command']=='echo user-hook' for g in groups for h in g['hooks']),1)
  def test_missing_origin_head_is_discovered(self):
   self.git(self.repo,'symbolic-ref','--delete','refs/remotes/origin/HEAD')
   self.install()

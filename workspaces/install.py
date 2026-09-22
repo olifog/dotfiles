@@ -120,8 +120,12 @@ for path in [HOME/'.codex/hooks.json',HOME/'.claude/settings.json']:
   hook={'hooks':[{'type':'command','command':shlex.quote(str(HOME/'.local/bin/agent-workspace'))+' hook','timeout':15}]}
   if event=='PreToolUse':hook['matcher']='Edit|Write|MultiEdit|NotebookEdit|apply_patch'
   # Replace only our exact managed handler, preserving unrelated hooks.
-  groups[:]=[g for g in groups if not any('agent-workspace' in h.get('command','') and h.get('command','').endswith(' hook') for h in g.get('hooks',[]))]
-  groups.append(hook)
+  managed_command=hook['hooks'][0]['command']
+  retained=[]
+  for group in groups:
+   handlers=[h for h in group.get('hooks',[]) if h.get('command')!=managed_command]
+   if handlers:retained.append(dict(group,hooks=handlers))
+  groups[:]=retained+[hook]
  write(path,json.dumps(settings,indent=2)+'\n')
 path=HOME/'.codex/config.toml';old=path.read_text() if path.exists() else ''
 match=re.search(r'^\[features\]\s*$',old,re.M)
