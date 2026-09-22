@@ -1,0 +1,5 @@
+#!/usr/bin/env bash
+set -euo pipefail
+# Keep the older Flappy gateway available to other tools, but use Claude login here.
+exec env -u ANTHROPIC_BASE_URL -u ANTHROPIC_API_KEY -u ANTHROPIC_AUTH_TOKEN \
+    "$HOME/.local/bin/claude" "$@"
