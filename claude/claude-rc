@@ -1,0 +1,188 @@
+#!/usr/bin/env python3
+"""Manage one account-authenticated Claude Remote Control server per cluster."""
+import argparse
+from datetime import datetime, timezone
+import fcntl
+import json
+import os
+from pathlib import Path
+import shlex
+import shutil
+import subprocess
+import sys
+import time
+
+HOME = Path.home()
+CONFIG = HOME / '.config/claude-rc/config.json'
+EXE = HOME / '.local/bin/claude-rc'
+UNIT = 'claude-rc.service'
+TMUX = ['tmux', '-L', 'claude-rc']
+
+
+def call(*args, check=True):
+    return subprocess.run(args, text=True, capture_output=True, check=check)
+
+
+def write(path, text, mode=0o600):
+    if path.is_symlink():
+        raise RuntimeError(f'Refusing to replace symlink: {path}')
+    if path.exists() and path.read_text() == text:
+        return
+    path.parent.mkdir(parents=True, exist_ok=True)
+    if path.exists():
+        backup = HOME / '.dotfiles-backups' / datetime.now(timezone.utc).strftime('claude-rc-%Y%m%dT%H%M%S%fZ')
+        backup.mkdir(parents=True)
+        shutil.copy2(path, backup / path.name)
+    temp = path.with_name(path.name + '.tmp')
+    with temp.open('x') as stream:
+        os.chmod(temp, mode)
+        stream.write(text)
+    temp.replace(path)
+
+
+def config():
+    return json.loads(CONFIG.read_text())
+
+
+def install(host):
+    if sys.platform != 'linux':
+        raise RuntimeError('Install this server on the remote Linux cluster, not the laptop')
+    registry = json.loads((HOME / '.config/agent-workspace/repos.json').read_text())
+    root = Path(registry['repos']['core']['path']).resolve()
+    call('git', '-C', str(root), 'rev-parse', '--show-toplevel')
+    available = shutil.which('systemctl') and call('systemctl', '--user', 'show-environment', check=False).returncode == 0
+    backend = 'systemd' if available else 'tmux'
+    old = config() if CONFIG.exists() else {}
+    if old and old['backend'] != backend:
+        raise RuntimeError('Stop the existing server and review its backend before migrating')
+    settings_path = HOME / '.claude/settings.json'
+    settings = json.loads(settings_path.read_text()) if settings_path.exists() else {}
+    settings['remoteControlAtStartup'] = True
+    write(settings_path, json.dumps(settings, indent=2) + '\n')
+    write(EXE, Path(__file__).read_text(), 0o755)
+    write(CONFIG, json.dumps(dict(host=host, path=str(root), name=host.title() + ' core',
+                                 capacity=2 if host == 'loki' else 4, backend=backend,
+                                 enabled=old.get('enabled', True)), indent=2) + '\n')
+    if available:
+        write(HOME / '.config/systemd/user' / UNIT, '''[Unit]
+Description=Claude Remote Control for the core task entry point
+StartLimitIntervalSec=600
+StartLimitBurst=5
+
+[Service]
+Type=simple
+ExecStart=%h/.local/bin/claude-rc run
+Restart=on-failure
+RestartSec=30
+KillSignal=SIGINT
+TimeoutStopSec=45
+UMask=0077
+LogRateLimitIntervalSec=60s
+LogRateLimitBurst=100
+
+[Install]
+WantedBy=default.target
+''')
+        call('systemctl', '--user', 'daemon-reload')
+    else:
+        if not shutil.which('tmux'):
+            raise RuntimeError('tmux is required when no user service manager is available')
+        write(HOME / '.config/fish/conf.d/claude-rc.fish',
+              'if status is-interactive\n    ' + shlex.quote(str(EXE)) + ' ensure >/dev/null 2>&1\nend\n')
+        profile = HOME / '.profile'
+        content = profile.read_text() if profile.exists() else ''
+        line = shlex.quote(str(EXE)) + ' ensure >/dev/null 2>&1 # claude-rc-autostart'
+        if line not in content:
+            write(profile, content.rstrip() + '\n' + line + '\n')
+    print(json.dumps(config()))
+    print('Installed. Complete account login, workspace trust and the RC confirmation, then run claude-rc start.')
+
+
+def run(cfg):
+    # Resolve the registered reference at install time. Never enter Together's legacy root.
+    os.chdir(cfg['path'])
+    environment = os.environ.copy()
+    environment['PATH'] = str(HOME / '.local/bin') + ':' + environment.get('PATH', '/usr/bin:/bin')
+    environment.pop('CODEX_THREAD_ID', None)
+    os.execve(str(HOME / '.local/bin/claude-account'), [str(HOME / '.local/bin/claude-account'),
+        'remote-control', '--name', cfg['name'], '--spawn', 'worktree',
+        '--capacity', str(cfg['capacity']), '--permission-mode', 'default'], environment)
+
+
+def manage(action, cfg):
+    if action == 'ensure' and not cfg['enabled']:
+        return
+    if action in ('start', 'stop'):
+        cfg['enabled'] = action == 'start'
+        write(CONFIG, json.dumps(cfg, indent=2) + '\n')
+    if cfg['backend'] == 'systemd':
+        if action in ('start', 'ensure'):
+            call('systemctl', '--user', 'enable', '--now', UNIT)
+        elif action == 'stop':
+            call('systemctl', '--user', 'disable', '--now', UNIT)
+        else:
+            print(call('systemctl', '--user', 'show', UNIT, '-p', 'ActiveState', '-p', 'SubState', '-p', 'MainPID', '-p', 'NRestarts').stdout, end='')
+            print(call('journalctl', '--user', '-u', UNIT, '-n', '25', '--no-pager').stdout, end='')
+    else:
+        active = call(*TMUX, 'has-session', '-t', '=core', check=False).returncode == 0
+        if action in ('start', 'ensure') and not active:
+            call(*TMUX, 'new-session', '-d', '-s', 'core', '-x', '160', '-y', '45',
+                 '-c', cfg['path'], shlex.join([str(EXE), 'supervise']))
+        elif action == 'stop' and active:
+            # Stop this dedicated RC server only; no user's other tmux sessions are touched.
+            call(*TMUX, 'send-keys', '-t', 'core:0.0', 'C-c')
+            deadline = time.monotonic() + 45
+            while call(*TMUX, 'has-session', '-t', '=core', check=False).returncode == 0:
+                if time.monotonic() >= deadline:
+                    raise RuntimeError('RC did not stop within 45 seconds; inspect its tmux pane')
+                time.sleep(0.2)
+        elif action == 'status':
+            print('tmux running' if active else 'tmux stopped')
+            if active:
+                print(call(*TMUX, 'capture-pane', '-p', '-S', '-50', '-t', 'core:0.0').stdout.rstrip())
+
+
+def supervise():
+    delay = 30
+    while config()['enabled']:
+        started = time.monotonic()
+        result = subprocess.run([str(EXE), 'run'])
+        if result.returncode == 0:
+            return
+        if time.monotonic() - started > 300:
+            delay = 30
+        print(f'RC exited ({result.returncode}); retrying in {delay}s', flush=True)
+        time.sleep(delay)
+        delay = min(delay * 2, 300)
+
+
+def main():
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument('action', choices=['install', 'start', 'ensure', 'stop', 'status', 'run', 'supervise'])
+    parser.add_argument('--host', choices=['together', 'cheetah', 'thor', 'loki'])
+    args = parser.parse_args()
+    if args.action == 'install':
+        if not args.host:
+            parser.error('install requires --host')
+        install(args.host)
+    elif args.action == 'run':
+        run(config())
+    elif args.action == 'supervise':
+        supervise()
+    else:
+        CONFIG.parent.mkdir(parents=True, exist_ok=True)
+        with (CONFIG.parent / 'control.lock').open('w') as lock:
+            fcntl.flock(lock, fcntl.LOCK_EX)
+            manage(args.action, config())
+
+
+if __name__ == '__main__':
+    try:
+        main()
+    except KeyboardInterrupt:
+        sys.exit(0)
+    except (OSError, ValueError, KeyError, RuntimeError, subprocess.CalledProcessError) as error:
+        print(f'claude-rc: {error}', file=sys.stderr)
+        if isinstance(error, subprocess.CalledProcessError):
+            print(error.stderr, file=sys.stderr)
+        sys.exit(1)
